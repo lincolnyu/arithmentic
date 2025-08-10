@@ -30,7 +30,7 @@
     var answersPerMin = double.Parse(strAnswersPerMin!);
     var consecutiveCorrect = int.Parse(strConsecutiveCorrect!);
 
-    int nonRepeatQueueLength = 5;
+    int nonRepeatQueueLength = 3;
     if (strNonRepeatQueueLength is not null)
     {
         nonRepeatQueueLength = int.Parse(strNonRepeatQueueLength!);
@@ -75,7 +75,7 @@ internal class Answer((int, int) operands, int answer, TimeSpan timeSpent)
 internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin, int consecutiveCorrect, int nonRepeatQueueLength, int reinforceRepeatCap)
 {
     private readonly Dictionary<(int,int), int> _pastErrors = [];
-    private readonly Dictionary<(int, int), int> _pastSlowAnswers = new();
+    private readonly Dictionary<(int, int), int> _pastSlowAnswers = [];
 
     public int DigitsOperand1 { get; } = digitsOperand1;
 
@@ -83,7 +83,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
 
     public double AnswersPerMinRequired { get; } = answersPerMin;
 
-    public int ConsecutiveCorrectRequired { get; } = consecutiveCorrect;
+    public int ConsecutiveSuccessRequired { get; } = consecutiveCorrect;
 
     public int NonRepeatQueueLength { get; } = nonRepeatQueueLength;
 
@@ -96,7 +96,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
         Console.WriteLine($"Quiz of multiplying {DigitsOperand1}-digit and {DigitsOperand2}-digit numbers.");
         Console.WriteLine();
         Console.WriteLine($"Logging: {(logging?"Enabled":"Disabled")}.");
-        Console.WriteLine($"Required consecutive correctness: {ConsecutiveCorrectRequired}.");
+        Console.WriteLine($"Required consecutive correctness: {ConsecutiveSuccessRequired}.");
         Console.WriteLine($"Required speed: {AnswersPerMinRequired} Answers/min.");
         Console.WriteLine($"Non-repeat length: {NonRepeatQueueLength}.");
         Console.WriteLine($"Reinforcement repeats capped at: {ReinforceRepeatCap}.");
@@ -108,113 +108,163 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
         LoggedAnswers.Clear();
 
         var rand = new Random();
-        var consecutiveCorrectAnswersSecondsUsed = new List<double>();
-        var correctPostClearing = 0;
-        Queue<(int, int)> lastOperands = [];
-        bool succeeded = false;
-        while (!succeeded)
+ 
+        Queue<(int, int)> previousOperands = [];    // To avoid repeating the same operands in a row
+
+        var maxAllowedAnswerTime = TimeSpan.FromSeconds(60.0 / AnswersPerMinRequired);
+
+        int consecutiveSuccess = 0;
+        TimeSpan? minTimeUsed = null;
+        TimeSpan? maxTimeUsed = null;
+
+        bool done = false;
+
+        while (!done)
         {
         __regenerate:
             var (operand1, operand2) = GenerateOperands(rand);
-            var orderedOperands = OrderOperands((operand1, operand2));
-            if (lastOperands.Contains(orderedOperands))
+            var distintOperandTuple = OrderOperands((operand1, operand2));
+            if (previousOperands.Contains(distintOperandTuple))
             {
                 goto __regenerate;
             }
-            lastOperands.Enqueue(orderedOperands);
-            if (lastOperands.Count > NonRepeatQueueLength)
+            previousOperands.Enqueue(distintOperandTuple);
+            if (previousOperands.Count > NonRepeatQueueLength)
             {
-                lastOperands.Dequeue();
+                previousOperands.Dequeue();
             }
 
             var answer = operand1 * operand2;
             Console.Write($"{operand1} × {operand2} = ");
             var startTime = DateTime.Now;
             var userAnswer = Console.ReadLine();
-            var elapsedTime = DateTime.Now - startTime;
-            double? actualAnswersPerMin = null;
+
+            var timeUsed = DateTime.Now - startTime;
 
             if (int.TryParse(userAnswer, out var parsedAnswer) && parsedAnswer == answer)
             {
-                if (_pastErrors.Count == 0)
+                var withinTimeLimit = timeUsed <= maxAllowedAnswerTime;
+                if (withinTimeLimit)
                 {
-                    correctPostClearing++;
+                    consecutiveSuccess++;
+                    minTimeUsed = minTimeUsed == null || timeUsed < minTimeUsed ? timeUsed : minTimeUsed;
+                    maxTimeUsed = maxTimeUsed == null || timeUsed > maxTimeUsed ? timeUsed : maxTimeUsed;
+                    _pastSlowAnswers.Remove(distintOperandTuple);
+                }
+                else
+                {                     
+                    consecutiveSuccess = 0;
+                    minTimeUsed = null;
+                    maxTimeUsed = null;
                 }
 
-                if (_pastErrors.TryGetValue(orderedOperands, out var errorCount))
+                if (_pastErrors.Count == 0 && _pastSlowAnswers.Count == 0 && consecutiveSuccess >= ConsecutiveSuccessRequired)
                 {
-                    _pastErrors[orderedOperands] = Math.Max(0, errorCount - 1);
-                    if (_pastErrors[orderedOperands] == 0) _pastErrors.Remove(orderedOperands);
-                }
-
-                actualAnswersPerMin = null;
-                consecutiveCorrectAnswersSecondsUsed.Add(elapsedTime.TotalSeconds);
-
-                if (_pastErrors.Count == 0)
-                {
-                    if (consecutiveCorrectAnswersSecondsUsed.Count > ConsecutiveCorrectRequired)
-                        consecutiveCorrectAnswersSecondsUsed.RemoveRange(0,
-                            consecutiveCorrectAnswersSecondsUsed.Count - ConsecutiveCorrectRequired);
-
-                    var totalTime = consecutiveCorrectAnswersSecondsUsed.Sum();
-                    actualAnswersPerMin = consecutiveCorrectAnswersSecondsUsed.Count / (totalTime / 60.0);
-
-                    if (correctPostClearing >= ConsecutiveCorrectRequired && actualAnswersPerMin >= AnswersPerMinRequired)
-                    {
-                        succeeded = true;
-                    }
-                }
-
-                string suffix;
-                if (_pastErrors.Count > 0)
-                {
-                    suffix = $"({PrintRemainingPastErrorAndRepeatInstanceNumbers()})";
+                    done = true;
                 }
                 else
                 {
-                    suffix = $"(CC={correctPostClearing}/{ConsecutiveCorrectRequired}";
-                    if (actualAnswersPerMin.HasValue)
+                    RemoveFromDict(_pastErrors, distintOperandTuple);
+                    if (!withinTimeLimit)
                     {
-                        suffix += $", A/min={actualAnswersPerMin.Value:F2}/{AnswersPerMinRequired:F2}";
+                        AddToDict(_pastSlowAnswers, distintOperandTuple, ReinforceRepeatCap);
                     }
-                    suffix += ")";
+
+                    string messageForCorrectAnswer = $"Correct taking {timeUsed.TotalSeconds:F2}s";
+                    if (withinTimeLimit)
+                    {
+                        messageForCorrectAnswer += $" (Within time limit {maxAllowedAnswerTime.TotalSeconds:F2}s).";
+                    }
+                    else
+                    {
+                        messageForCorrectAnswer += $" (took too long for {maxAllowedAnswerTime.TotalSeconds:F2}s).";
+                    }
+                    if (_pastErrors.Count > 0)
+                    {
+                        messageForCorrectAnswer += $" ({PrintRemainingPastErrorAndRepeatInstanceNumbers()})";
+                    }
+                    else if (_pastSlowAnswers.Count > 0)
+                    {
+                        messageForCorrectAnswer += $" ({PrintRemainingPastSlowAnswers()}).";
+                    }
+                    else
+                    {
+                        messageForCorrectAnswer += $" (ConsSucc={consecutiveSuccess}/{ConsecutiveSuccessRequired})";
+                    }
+
+                    Console.WriteLine($"{messageForCorrectAnswer}");
                 }
 
-                Console.WriteLine($"Correct! {suffix}");
+                  
             }
             else
             {
-                correctPostClearing = 0;
-                consecutiveCorrectAnswersSecondsUsed.Clear();
-                var newErrors = Math.Min(_pastErrors.GetValueOrDefault(orderedOperands, 0) + 1, ReinforceRepeatCap);
-                _pastErrors[orderedOperands] = newErrors;
+                consecutiveSuccess = 0;
+                minTimeUsed = null;
+                maxTimeUsed = null;
+                AddToDict(_pastErrors, distintOperandTuple, ReinforceRepeatCap);
                 Console.WriteLine(
                     $"Incorrect! ({PrintRemainingPastErrorAndRepeatInstanceNumbers()})");
             }
 
             if (logging)
             {
-                var answerEntry = new Answer((operand1, operand2), parsedAnswer, elapsedTime);
+                var answerEntry = new Answer((operand1, operand2), parsedAnswer, timeUsed);
                 LoggedAnswers.Add(answerEntry);
             }
 
-            Console.Write("Press any key to continue...");
-            Console.ReadKey();
-            Console.Clear();
-
-            if (succeeded)
+            if (done)
             {
                 Console.Clear();
-                Console.WriteLine(
-                    $"Congratulations! You made {consecutiveCorrectAnswersSecondsUsed.Count} consecutive correct answer(s) at {actualAnswersPerMin:F2} A/min satisfying the required {AnswersPerMinRequired:F2} A/min.");
+                Console.WriteLine($"Congratulations! You succeeded {consecutiveSuccess} times in a row above required {AnswersPerMinRequired:F2} A/min.");
+                Console.WriteLine($"Max time used {maxTimeUsed!.Value.TotalSeconds:F2}s ({TimeToApm(maxTimeUsed.Value)} A/min).");
+                Console.WriteLine($"Min time used {minTimeUsed!.Value.TotalSeconds:F2}s ({TimeToApm(minTimeUsed.Value)} A/min).");
+            }
+            else
+            {
+                Console.Write("Press any key to continue...");
+                Console.ReadKey();
+                Console.Clear();
             }
         }
     }
-    
+
+    private static double TimeToApm(TimeSpan timeUsed)
+    {
+        return 60.0 / timeUsed.TotalSeconds;
+    }
+
+    private static void AddToDict<T>(Dictionary<T, int> dict, T item,int cap) where T : notnull
+    {
+        var newTargetValue = Math.Min(dict.GetValueOrDefault(item, 0) + 1, cap);
+        dict[item] = newTargetValue;
+    }
+
+    private static void RemoveFromDict<T>(Dictionary<T, int> dict, T item) where T : notnull
+    {
+        if (dict.TryGetValue(item, out var value))
+        {
+            if (value > 1)
+            {
+                dict[item] = value - 1;
+            }
+            else
+            {
+                dict.Remove(item);
+            }
+        }
+    }
+
     private string PrintRemainingPastErrorAndRepeatInstanceNumbers()
     {
         var totalFixes = _pastErrors.Values.Sum();
         return $"{totalFixes} blocking question(s) remain for {_pastErrors.Count} incorrect sets.";
+    }
+
+    private string PrintRemainingPastSlowAnswers()
+    {
+        var totalSlowAnswers = _pastSlowAnswers.Values.Sum();
+        return $"{totalSlowAnswers} slow answer(s) remain for {_pastSlowAnswers.Count} sets.";
     }
 
     private static (int, int) OrderOperands((int operand1, int operand2) operands)
@@ -235,6 +285,17 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
                 var error = _pastErrors.ElementAt(rand.Next(_pastErrors.Count));
                 var errorOperands = OrderOperands(error.Key);
                 return flip == 0 ? errorOperands : (errorOperands.Item2, errorOperands.Item1);
+            }
+        }
+        if (_pastSlowAnswers.Count > 0)
+        {
+            var pickSlow = rand.Next(0, 2);
+            if (pickSlow == 1)
+            {
+                // Pick a random slow answer from past slow answers
+                var slowAnswer = _pastSlowAnswers.ElementAt(rand.Next(_pastSlowAnswers.Count));
+                var slowOperands = OrderOperands(slowAnswer.Key);
+                return flip == 0 ? slowOperands : (slowOperands.Item2, slowOperands.Item1);
             }
         }
 
