@@ -81,9 +81,9 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
 
     public int DigitsOperand2 { get; } = digitsOperand2;
 
-    public double AnswersPerMinRequired { get; } = answersPerMin;
+    public double MinAnswersPerMinRequired { get; } = answersPerMin;
 
-    public int ConsecutiveSuccessRequired { get; } = consecutiveCorrect;
+    public int ConsecutiveSuccessesRequired { get; } = consecutiveCorrect;
 
     public int NonRepeatQueueLength { get; } = nonRepeatQueueLength;
 
@@ -96,8 +96,8 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
         Console.WriteLine($"Quiz of multiplying {DigitsOperand1}-digit and {DigitsOperand2}-digit numbers.");
         Console.WriteLine();
         Console.WriteLine($"Logging: {(logging?"Enabled":"Disabled")}.");
-        Console.WriteLine($"Required consecutive correctness: {ConsecutiveSuccessRequired}.");
-        Console.WriteLine($"Required speed: {AnswersPerMinRequired} Answers/min.");
+        Console.WriteLine($"Required consecutive successes: {ConsecutiveSuccessesRequired}.");
+        Console.WriteLine($"Required minimum speed: {MinAnswersPerMinRequired} Answers/min.");
         Console.WriteLine($"Non-repeat length: {NonRepeatQueueLength}.");
         Console.WriteLine($"Reinforcement repeats capped at: {ReinforceRepeatCap}.");
         Console.WriteLine();
@@ -111,7 +111,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
  
         Queue<(int, int)> previousOperands = [];    // To avoid repeating the same operands in a row
 
-        var maxAllowedAnswerTime = TimeSpan.FromSeconds(60.0 / AnswersPerMinRequired);
+        var maxAllowedAnswerTime = TimeSpan.FromSeconds(60.0 / MinAnswersPerMinRequired);
 
         int consecutiveSuccess = 0;
         TimeSpan? minTimeUsed = null;
@@ -158,7 +158,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
                     maxTimeUsed = null;
                 }
 
-                if (_pastErrors.Count == 0 && _pastSlowAnswers.Count == 0 && consecutiveSuccess >= ConsecutiveSuccessRequired)
+                if (_pastErrors.Count == 0 && _pastSlowAnswers.Count == 0 && consecutiveSuccess >= ConsecutiveSuccessesRequired)
                 {
                     done = true;
                 }
@@ -189,7 +189,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
                     }
                     else
                     {
-                        messageForCorrectAnswer += $" (ConsSucc={consecutiveSuccess}/{ConsecutiveSuccessRequired})";
+                        messageForCorrectAnswer += $" (ConsSucc={consecutiveSuccess}/{ConsecutiveSuccessesRequired})";
                     }
 
                     Console.WriteLine($"{messageForCorrectAnswer}");
@@ -216,7 +216,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
             if (done)
             {
                 Console.Clear();
-                Console.WriteLine($"Congratulations! You succeeded {consecutiveSuccess} times in a row above required {AnswersPerMinRequired:F2} A/min.");
+                Console.WriteLine($"Congratulations! You succeeded {consecutiveSuccess} times in a row above required {MinAnswersPerMinRequired:F2} A/min.");
                 Console.WriteLine($"Max time used {maxTimeUsed!.Value.TotalSeconds:F2}s ({TimeToApm(maxTimeUsed.Value)} A/min).");
                 Console.WriteLine($"Min time used {minTimeUsed!.Value.TotalSeconds:F2}s ({TimeToApm(minTimeUsed.Value)} A/min).");
             }
