@@ -149,7 +149,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
                     consecutiveSuccess++;
                     minTimeUsed = minTimeUsed == null || timeUsed < minTimeUsed ? timeUsed : minTimeUsed;
                     maxTimeUsed = maxTimeUsed == null || timeUsed > maxTimeUsed ? timeUsed : maxTimeUsed;
-                    _pastSlowAnswers.Remove(distintOperandTuple);
+                    RemoveFromDict(_pastSlowAnswers, distintOperandTuple);
                 }
                 else
                 {                     
@@ -194,8 +194,6 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
 
                     Console.WriteLine($"{messageForCorrectAnswer}");
                 }
-
-                  
             }
             else
             {
