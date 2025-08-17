@@ -74,8 +74,9 @@ internal class Answer((int, int) operands, int answer, TimeSpan timeSpent)
 
 internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin, int consecutiveCorrect, int nonRepeatQueueLength, int reinforceRepeatCap)
 {
-    private readonly Dictionary<(int,int), int> _pastErrors = [];
+    private readonly Dictionary<(int, int), int> _pastErrors = [];
     private readonly Dictionary<(int, int), int> _pastSlowAnswers = [];
+    private readonly Dictionary<(int, int), int> _pastMaxWeakness = [];
 
     public int DigitsOperand1 { get; } = digitsOperand1;
 
@@ -232,10 +233,17 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
         return 60.0 / timeUsed.TotalSeconds;
     }
 
-    private static void AddToDict<T>(Dictionary<T, int> dict, T item,int cap) where T : notnull
+    private void AddToDict(Dictionary<(int,int), int> dict, (int,int) item,int cap)
     {
-        var newTargetValue = Math.Min(dict.GetValueOrDefault(item, 0) + 1, cap);
+        var pastWeakness = _pastMaxWeakness.GetValueOrDefault(item, 0);
+        var newTargetValue = dict.GetValueOrDefault(item, 0) + 1;
+        if (pastWeakness > newTargetValue)
+        {
+            newTargetValue = pastWeakness;
+        }
+        newTargetValue = Math.Min(newTargetValue, cap);
         dict[item] = newTargetValue;
+        _pastMaxWeakness[item] = Math.Max(newTargetValue, pastWeakness);
     }
 
     private static void RemoveFromDict<T>(Dictionary<T, int> dict, T item) where T : notnull
