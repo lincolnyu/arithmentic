@@ -1,6 +1,9 @@
 ﻿using System.Reflection.Metadata.Ecma335;
 
 {
+    const double DefaultNonCarryAdditionCoeff = 0.8;
+    const double DefaultCarryAdditionCoeff = 1.5;
+
     string configFilePath = "multiplier.cfg";
     if (args.Length == 1)
     {
@@ -11,6 +14,8 @@
     string? strDigitsOperand2;
     string? strAnswersPerMin;
     string? strConsecutiveCorrect;
+    string? strNonCarryAdditionCoeff;
+    string? strCarryAdditionCoeff;
     string? loggerFilePath;
     string? strNonRepeatQueueLength;
     string? strReinforceRepeatCap;
@@ -23,6 +28,10 @@
         strConsecutiveCorrect = sr.ReadLine();
 
         loggerFilePath = sr.ReadLine();
+
+        strNonCarryAdditionCoeff = sr.ReadLine();
+        strCarryAdditionCoeff = sr.ReadLine();
+
         strNonRepeatQueueLength = sr.ReadLine();
         strReinforceRepeatCap = sr.ReadLine();
     }
@@ -31,6 +40,18 @@
     var digitsOperand2 = int.Parse(strDigitsOperand2!);
     var answersPerMin = double.Parse(strAnswersPerMin!);
     var consecutiveCorrect = int.Parse(strConsecutiveCorrect!);
+
+    double nonCarryAdditionCoeff = DefaultNonCarryAdditionCoeff;
+    if (strNonCarryAdditionCoeff is not null)
+    {
+        nonCarryAdditionCoeff = double.Parse(strNonCarryAdditionCoeff!);
+    }
+
+    double carryAdditionCoeff = DefaultCarryAdditionCoeff;
+    if (strCarryAdditionCoeff is not null)
+    {
+        carryAdditionCoeff = double.Parse(strCarryAdditionCoeff!);
+    }
 
     int nonRepeatQueueLength = 3;
     if (strNonRepeatQueueLength is not null)
@@ -45,7 +66,7 @@
 
     var logging = loggerFilePath is not null && !string.IsNullOrWhiteSpace(loggerFilePath);
 
-    var game = new Game(digitsOperand1, digitsOperand2, answersPerMin, consecutiveCorrect, nonRepeatQueueLength, reinforceRepeatCap);
+    var game = new Game(digitsOperand1, digitsOperand2, answersPerMin, consecutiveCorrect, nonCarryAdditionCoeff, carryAdditionCoeff, nonRepeatQueueLength, reinforceRepeatCap);
     game.Start(logging);
     if (logging)
     {
@@ -55,26 +76,36 @@
             sw.WriteLine(answer);
         }
         Console.WriteLine($"Answers logged in file '{loggerFilePath}'.");
+        System.Diagnostics.Process.Start("notepad.exe", loggerFilePath!);
     }
     Console.Write("Press any key to exit...");
     Console.ReadKey();
 }
 
-internal class Answer((int, int) operands, int answer, TimeSpan timeSpent)
+internal class Answer((int, int) operands, int answer, TimeSpan timeSpent, double performanceRatio)
 {
     public (int, int) Operands { get; } = operands;
     public int AnswerValue { get; } = answer;
     public bool IsCorrect => Operands.Item1 * Operands.Item2 == AnswerValue;
     public TimeSpan TimeSpent { get; } = timeSpent;
+
+    public double PerformanceRatio { get; } = performanceRatio;
+
+    public static double PerformanceRatioToReportRatio(double performanceRatio)
+    {
+        return (performanceRatio - 1) * 100.0;
+    }
+
     public override string ToString()
     {
         var question = $"{Operands.Item1}×{Operands.Item2}";
         var sign = IsCorrect ? "=" : "≠";
-        return $"{Operands.Item1}×{Operands.Item2}{sign}{AnswerValue},{TimeSpent.TotalSeconds:F2}";
+        var reportRatio = PerformanceRatioToReportRatio(PerformanceRatio);
+        return $"{Operands.Item1}×{Operands.Item2}{sign}{AnswerValue},{TimeSpent.TotalSeconds:F2},{reportRatio:F2}%";
     }
 }
 
-internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin, int consecutiveCorrect, int nonRepeatQueueLength, int reinforceRepeatCap)
+internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin, int consecutiveCorrect, double nonCarryAdditionCoeff, double carryAdditionCoeff, int nonRepeatQueueLength, int reinforceRepeatCap)
 {
     private readonly Dictionary<(int, int), int> _pastErrors = [];
     private readonly Dictionary<(int, int), int> _pastSlowAnswers = [];
@@ -87,6 +118,10 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
     public double MinAnswersPerMinRequired { get; } = answersPerMin;
 
     public int ConsecutiveSuccessesRequired { get; } = consecutiveCorrect;
+
+    public double NonCarryAdditionCoeff { get; } = nonCarryAdditionCoeff;
+
+    public double CarryAdditionCoeff { get; } = carryAdditionCoeff;
 
     public int NonRepeatQueueLength { get; } = nonRepeatQueueLength;
 
@@ -117,9 +152,10 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
         var referenceSingleDigitTime = TimeSpan.FromSeconds(60.0 / MinAnswersPerMinRequired);
 
         int consecutiveSuccess = 0;
-        TimeSpan? minTimeUsed = null;
-        TimeSpan? maxTimeUsed = null;
 
+        (double, int, int)? minPerf = null;
+        (double, int, int)? maxPerf = null;
+        
         bool done = false;
 
         while (!done)
@@ -143,29 +179,24 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
             var userAnswer = Console.ReadLine();
 
             var timeUsed = DateTime.Now - startTime;
+            var allowedTime = referenceSingleDigitTime * AssessComplexity(operand1, operand2, NonCarryAdditionCoeff, CarryAdditionCoeff);
+            var perfRatio = allowedTime.TotalSeconds / timeUsed.TotalSeconds;
 
             if (int.TryParse(userAnswer, out var parsedAnswer) && parsedAnswer == answer)
             {
-                var allowedTime = referenceSingleDigitTime * AssessComplexity(operand1, operand2);
-
                 var withinTimeLimit = timeUsed <= allowedTime;
                 if (withinTimeLimit)
                 {
                     consecutiveSuccess++;
-                    minTimeUsed = minTimeUsed == null || timeUsed < minTimeUsed ? timeUsed : minTimeUsed;
-                    maxTimeUsed = maxTimeUsed == null || timeUsed > maxTimeUsed ? timeUsed : maxTimeUsed;
+                    minPerf = minPerf == null || perfRatio < minPerf.Value.Item1 ? (perfRatio, operand1, operand2) : minPerf;
+                    maxPerf = maxPerf == null || perfRatio > maxPerf.Value.Item1 ? (perfRatio, operand1, operand2) : maxPerf;
                     RemoveFromDict(_pastSlowAnswers, distintOperandTuple);
                 }
                 else
                 {                     
                     consecutiveSuccess = 0;
-                    minTimeUsed = null;
-                    maxTimeUsed = null;
-                }
-
-                if (_pastErrors.Count == 0 && _pastSlowAnswers.Count == 0 && consecutiveSuccess >= ConsecutiveSuccessesRequired)
-                {
-                    done = true;
+                    minPerf = null;
+                    maxPerf = null;
                 }
                 
                 RemoveFromDict(_pastErrors, distintOperandTuple);
@@ -174,7 +205,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
                     AddToDict(_pastSlowAnswers, distintOperandTuple, ReinforceRepeatCap);
                 }
 
-                string messageForCorrectAnswer = $"Correct taking {timeUsed.TotalSeconds:F2}s";
+                string messageForCorrectAnswer = $"Correct taking {timeUsed.TotalSeconds:F2}s, perf ratio {Answer.PerformanceRatioToReportRatio(perfRatio):F2}%";
                 if (withinTimeLimit)
                 {
                     messageForCorrectAnswer += $" (Within time limit {allowedTime.TotalSeconds:F2}s).";
@@ -196,13 +227,15 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
                     messageForCorrectAnswer += $" (ConsSucc={consecutiveSuccess}/{ConsecutiveSuccessesRequired})";
                 }
 
+                done = (_pastErrors.Count == 0 && _pastSlowAnswers.Count == 0 && consecutiveSuccess >= ConsecutiveSuccessesRequired);
+
                 Console.WriteLine($"{messageForCorrectAnswer}");
             }
             else
             {
                 consecutiveSuccess = 0;
-                minTimeUsed = null;
-                maxTimeUsed = null;
+                minPerf = null;
+                maxPerf = null;
                 AddToDict(_pastErrors, distintOperandTuple, ReinforceRepeatCap);
                 Console.WriteLine(
                     $"Incorrect! ({PrintRemainingPastErrorAndRepeatInstanceNumbers()})");
@@ -210,7 +243,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
 
             if (logging)
             {
-                var answerEntry = new Answer((operand1, operand2), parsedAnswer, timeUsed);
+                var answerEntry = new Answer((operand1, operand2), parsedAnswer, timeUsed, perfRatio);
                 LoggedAnswers.Add(answerEntry);
             }
 
@@ -223,8 +256,11 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
         {
             Console.Clear();
             Console.WriteLine($"Congratulations! You succeeded {consecutiveSuccess} times in a row above required {MinAnswersPerMinRequired:F2} A/min.");
-            Console.WriteLine($"Max time used {maxTimeUsed!.Value.TotalSeconds:F2}s ({TimeToApm(maxTimeUsed.Value)} A/min).");
-            Console.WriteLine($"Min time used {minTimeUsed!.Value.TotalSeconds:F2}s ({TimeToApm(minTimeUsed.Value)} A/min).");
+            if (maxPerf.HasValue && minPerf.HasValue)
+            {
+                Console.WriteLine($"Max performance ratio: {Answer.PerformanceRatioToReportRatio(maxPerf.Value.Item1):F2}% ({maxPerf.Value.Item2}×{maxPerf.Value.Item3}).");
+                Console.WriteLine($"Min performance ratio: {Answer.PerformanceRatioToReportRatio(minPerf.Value.Item1):F2}% ({minPerf.Value.Item2}×{minPerf.Value.Item3}).");
+            }
         }
     }
 
@@ -330,12 +366,12 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
         return 0.9;
     }
 
-    static double AssessComplexity(int a, int b)
+    static double AssessComplexity(int a, int b, double nonCarryAdditionCoeff, double carryAdditionCoeff)
     {
         if (a < b) (a, b) = (b, a);
         var digitsA = ConvertNumberToDigits(a);
         var digitsB = ConvertNumberToDigits(b);
-        return AssessComplexity(digitsA, digitsB);
+        return AssessComplexity(digitsA, digitsB, nonCarryAdditionCoeff, carryAdditionCoeff);
     }
 
     static int[] ConvertNumberToDigits(int number)
@@ -349,7 +385,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
         return q.ToArray();
     }
 
-    static double AssessComplexity(int[] digitsOperand1, int[] digitsOperand2)
+    static double AssessComplexity(int[] digitsOperand1, int[] digitsOperand2, double nonCarryAdditionCoeff, double carryAdditionCoeff)
     {
         double totalComplexity = 0;
         foreach (var b in digitsOperand2)
@@ -371,11 +407,11 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
                         // TODO Can make this configurable
                         if (carry + lsd < 10)
                         {
-                            compSingleDigit += 0.5;
+                            compSingleDigit += nonCarryAdditionCoeff;
                         }
                         else
                         {
-                            compSingleDigit += 0.9;
+                            compSingleDigit += carryAdditionCoeff;
                         }
                     }
                 }
