@@ -1,8 +1,8 @@
-﻿using System.Reflection.Metadata.Ecma335;
-
-{
-    const double DefaultNonCarryAdditionCoeff = 0.8;
-    const double DefaultCarryAdditionCoeff = 1.5;
+﻿{
+    const double DefaultSingleDigitNoCarryAdditionCoeff = 0.9;
+    const double DefaultSingleDigitCarryAdditionCoeff = 2.0;
+    const double DefaultMultiDigitNoCarryAdditionCoeff = 2.1;
+    const double DefaultMultiDigitCarryAdditionCoeff = 2.8;
 
     string configFilePath = "multiplier.cfg";
     if (args.Length == 1)
@@ -14,8 +14,7 @@
     string? strDigitsOperand2;
     string? strAnswersPerMin;
     string? strConsecutiveCorrect;
-    string? strNonCarryAdditionCoeff;
-    string? strCarryAdditionCoeff;
+    string? strAdditionCoeffs;
     string? loggerFilePath;
     string? strNonRepeatQueueLength;
     string? strReinforceRepeatCap;
@@ -29,9 +28,8 @@
 
         loggerFilePath = sr.ReadLine();
 
-        strNonCarryAdditionCoeff = sr.ReadLine();
-        strCarryAdditionCoeff = sr.ReadLine();
-
+        strAdditionCoeffs = sr.ReadLine();
+    
         strNonRepeatQueueLength = sr.ReadLine();
         strReinforceRepeatCap = sr.ReadLine();
     }
@@ -41,18 +39,49 @@
     var answersPerMin = double.Parse(strAnswersPerMin!);
     var consecutiveCorrect = int.Parse(strConsecutiveCorrect!);
 
-    double nonCarryAdditionCoeff = DefaultNonCarryAdditionCoeff;
-    if (strNonCarryAdditionCoeff is not null)
+    double singleDigitNoCarryAdditionCoeff = DefaultSingleDigitNoCarryAdditionCoeff;
+    double singleDigitCarryAdditionCoeff = DefaultSingleDigitCarryAdditionCoeff;
+    double multiDigitNoCarryAdditionCoeff = DefaultMultiDigitNoCarryAdditionCoeff;
+    double multiDigitCarryAdditionCoeff = DefaultMultiDigitCarryAdditionCoeff;
+    if (strAdditionCoeffs is not null)
     {
-        nonCarryAdditionCoeff = double.Parse(strNonCarryAdditionCoeff!);
+        var coeffs = strAdditionCoeffs.Split(',');
+        if (coeffs.Length == 1)
+        {
+            var val = double.Parse(coeffs[0]);
+            singleDigitNoCarryAdditionCoeff = val;
+            singleDigitCarryAdditionCoeff = val;
+            multiDigitNoCarryAdditionCoeff = val;
+            multiDigitCarryAdditionCoeff = val;
+        }
+        else if (coeffs.Length == 2)
+        {
+            singleDigitNoCarryAdditionCoeff = double.Parse(coeffs[0]);
+            singleDigitCarryAdditionCoeff = double.Parse(coeffs[1]);
+            multiDigitNoCarryAdditionCoeff = singleDigitNoCarryAdditionCoeff;
+            multiDigitCarryAdditionCoeff = singleDigitCarryAdditionCoeff;
+        }
+        else if (coeffs.Length == 3)
+        {
+            singleDigitNoCarryAdditionCoeff = double.Parse(coeffs[0]);
+            singleDigitCarryAdditionCoeff = double.Parse(coeffs[1]);
+            multiDigitNoCarryAdditionCoeff = double.Parse(coeffs[2]);
+            var multiSingleRatio = multiDigitNoCarryAdditionCoeff / singleDigitNoCarryAdditionCoeff;
+            multiDigitCarryAdditionCoeff = singleDigitNoCarryAdditionCoeff*multiSingleRatio;
+        }
+        else if (coeffs.Length == 4)
+        {
+            singleDigitNoCarryAdditionCoeff = double.Parse(coeffs[1]);
+            singleDigitCarryAdditionCoeff = double.Parse(coeffs[0]);
+            multiDigitNoCarryAdditionCoeff = double.Parse(coeffs[3]);
+            multiDigitCarryAdditionCoeff = double.Parse(coeffs[2]);
+        }
+        else
+        {
+            throw new Exception("Invalid addition coeffs line in config file.");
+        }
     }
-
-    double carryAdditionCoeff = DefaultCarryAdditionCoeff;
-    if (strCarryAdditionCoeff is not null)
-    {
-        carryAdditionCoeff = double.Parse(strCarryAdditionCoeff!);
-    }
-
+  
     int nonRepeatQueueLength = 3;
     if (strNonRepeatQueueLength is not null)
     {
@@ -66,7 +95,7 @@
 
     var logging = loggerFilePath is not null && !string.IsNullOrWhiteSpace(loggerFilePath);
 
-    var game = new Game(digitsOperand1, digitsOperand2, answersPerMin, consecutiveCorrect, nonCarryAdditionCoeff, carryAdditionCoeff, nonRepeatQueueLength, reinforceRepeatCap);
+    var game = new Game(digitsOperand1, digitsOperand2, answersPerMin, consecutiveCorrect, (singleDigitNoCarryAdditionCoeff,singleDigitCarryAdditionCoeff, multiDigitNoCarryAdditionCoeff, multiDigitCarryAdditionCoeff), nonRepeatQueueLength, reinforceRepeatCap);
     game.Start(logging);
     if (logging)
     {
@@ -108,7 +137,7 @@ internal class Answer((int, int) operands, int answer, TimeSpan timeSpent, doubl
     }
 }
 
-internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin, int consecutiveCorrect, double nonCarryAdditionCoeff, double carryAdditionCoeff, int nonRepeatQueueLength, int reinforceRepeatCap)
+internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin, int consecutiveCorrect, (double,double,double,double) additionCoeff, int nonRepeatQueueLength, int reinforceRepeatCap)
 {
     private readonly Dictionary<(int, int), int> _pastErrors = [];
     private readonly Dictionary<(int, int), int> _pastSlowAnswers = [];
@@ -122,9 +151,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
 
     public int ConsecutiveSuccessesRequired { get; } = consecutiveCorrect;
 
-    public double NonCarryAdditionCoeff { get; } = nonCarryAdditionCoeff;
-
-    public double CarryAdditionCoeff { get; } = carryAdditionCoeff;
+    public (double, double, double, double) AdditionCoeff { get; } = additionCoeff;
 
     public int NonRepeatQueueLength { get; } = nonRepeatQueueLength;
 
@@ -182,7 +209,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
             var userAnswer = Console.ReadLine();
 
             var timeUsed = DateTime.Now - startTime;
-            var allowedTime = referenceSingleDigitTime * AssessComplexity(operand1, operand2, NonCarryAdditionCoeff, CarryAdditionCoeff);
+            var allowedTime = referenceSingleDigitTime * AssessComplexity(operand1, operand2, AdditionCoeff);
             var perfRatio = allowedTime.TotalSeconds / timeUsed.TotalSeconds;
 
             if (int.TryParse(userAnswer, out var parsedAnswer) && parsedAnswer == answer)
@@ -369,12 +396,12 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
         return 0.9;
     }
 
-    static double AssessComplexity(int a, int b, double nonCarryAdditionCoeff, double carryAdditionCoeff)
+    public static double AssessComplexity(int a, int b, (double,double,double,double) additionCoeff)
     {
         if (a < b) (a, b) = (b, a);
         var digitsA = ConvertNumberToDigits(a);
         var digitsB = ConvertNumberToDigits(b);
-        return AssessComplexity(digitsA, digitsB, nonCarryAdditionCoeff, carryAdditionCoeff);
+        return AssessComplexity(digitsA, digitsB, additionCoeff);
     }
 
     static int[] ConvertNumberToDigits(int number)
@@ -388,8 +415,9 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
         return q.ToArray();
     }
 
-    static double AssessComplexity(int[] digitsOperand1, int[] digitsOperand2, double nonCarryAdditionCoeff, double carryAdditionCoeff)
+    static double AssessComplexity(int[] digitsOperand1, int[] digitsOperand2, (double, double, double, double) additionCoeff)
     {
+        var (singleNoCarry, singleCarry, multiNoCarry, multiCarry) = additionCoeff;
         double totalComplexity = 0;
         foreach (var b in digitsOperand2)
         {
@@ -403,18 +431,34 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
                     var m = a * b;
                     var carry = m / 10;
 
-                    var lsd = digitsOperand1[j + 1] % 10;
-
-                    if (carry >= 0)
+                    if (carry > 0)
                     {
-                        // TODO Can make this configurable
-                        if (carry + lsd < 10)
+                        var addend = digitsOperand1[j + 1] * b;
+                        var lsd = addend % 10;
+
+                        var additionHasCarry = carry + lsd >= 10;
+                        var singleDigit = addend < 10; 
+                        if (additionHasCarry)
                         {
-                            compSingleDigit += nonCarryAdditionCoeff;
+                            if (singleDigit)
+                            {
+                                compSingleDigit += singleCarry;
+                            }
+                            else
+                            {
+                                compSingleDigit += multiCarry;
+                            }
                         }
                         else
                         {
-                            compSingleDigit += carryAdditionCoeff;
+                            if (singleDigit)
+                            {
+                                compSingleDigit += singleNoCarry;
+                            }
+                            else
+                            {
+                                compSingleDigit += multiNoCarry;
+                            }
                         }
                     }
                 }
