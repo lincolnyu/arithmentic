@@ -1,4 +1,6 @@
-﻿{
+﻿using System.Reflection.Metadata.Ecma335;
+
+{
     string configFilePath = "multiplier.cfg";
     if (args.Length == 1)
     {
@@ -112,7 +114,7 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
  
         Queue<(int, int)> previousOperands = [];    // To avoid repeating the same operands in a row
 
-        var maxAllowedAnswerTime = TimeSpan.FromSeconds(60.0 / MinAnswersPerMinRequired);
+        var referenceSingleDigitTime = TimeSpan.FromSeconds(60.0 / MinAnswersPerMinRequired);
 
         int consecutiveSuccess = 0;
         TimeSpan? minTimeUsed = null;
@@ -144,7 +146,9 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
 
             if (int.TryParse(userAnswer, out var parsedAnswer) && parsedAnswer == answer)
             {
-                var withinTimeLimit = timeUsed <= maxAllowedAnswerTime;
+                var allowedTime = referenceSingleDigitTime * AssessComplexity(operand1, operand2);
+
+                var withinTimeLimit = timeUsed <= allowedTime;
                 if (withinTimeLimit)
                 {
                     consecutiveSuccess++;
@@ -163,38 +167,36 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
                 {
                     done = true;
                 }
+                
+                RemoveFromDict(_pastErrors, distintOperandTuple);
+                if (!withinTimeLimit)
+                {
+                    AddToDict(_pastSlowAnswers, distintOperandTuple, ReinforceRepeatCap);
+                }
+
+                string messageForCorrectAnswer = $"Correct taking {timeUsed.TotalSeconds:F2}s";
+                if (withinTimeLimit)
+                {
+                    messageForCorrectAnswer += $" (Within time limit {allowedTime.TotalSeconds:F2}s).";
+                }
                 else
                 {
-                    RemoveFromDict(_pastErrors, distintOperandTuple);
-                    if (!withinTimeLimit)
-                    {
-                        AddToDict(_pastSlowAnswers, distintOperandTuple, ReinforceRepeatCap);
-                    }
-
-                    string messageForCorrectAnswer = $"Correct taking {timeUsed.TotalSeconds:F2}s";
-                    if (withinTimeLimit)
-                    {
-                        messageForCorrectAnswer += $" (Within time limit {maxAllowedAnswerTime.TotalSeconds:F2}s).";
-                    }
-                    else
-                    {
-                        messageForCorrectAnswer += $" (took too long for {maxAllowedAnswerTime.TotalSeconds:F2}s).";
-                    }
-                    if (_pastErrors.Count > 0)
-                    {
-                        messageForCorrectAnswer += $" ({PrintRemainingPastErrorAndRepeatInstanceNumbers()})";
-                    }
-                    else if (_pastSlowAnswers.Count > 0)
-                    {
-                        messageForCorrectAnswer += $" ({PrintRemainingPastSlowAnswers()}).";
-                    }
-                    else
-                    {
-                        messageForCorrectAnswer += $" (ConsSucc={consecutiveSuccess}/{ConsecutiveSuccessesRequired})";
-                    }
-
-                    Console.WriteLine($"{messageForCorrectAnswer}");
+                    messageForCorrectAnswer += $" (took too long for {allowedTime.TotalSeconds:F2}s).";
                 }
+                if (_pastErrors.Count > 0)
+                {
+                    messageForCorrectAnswer += $" ({PrintRemainingPastErrorAndRepeatInstanceNumbers()})";
+                }
+                else if (_pastSlowAnswers.Count > 0)
+                {
+                    messageForCorrectAnswer += $" ({PrintRemainingPastSlowAnswers()}).";
+                }
+                else
+                {
+                    messageForCorrectAnswer += $" (ConsSucc={consecutiveSuccess}/{ConsecutiveSuccessesRequired})";
+                }
+
+                Console.WriteLine($"{messageForCorrectAnswer}");
             }
             else
             {
@@ -212,19 +214,17 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
                 LoggedAnswers.Add(answerEntry);
             }
 
-            if (done)
-            {
-                Console.Clear();
-                Console.WriteLine($"Congratulations! You succeeded {consecutiveSuccess} times in a row above required {MinAnswersPerMinRequired:F2} A/min.");
-                Console.WriteLine($"Max time used {maxTimeUsed!.Value.TotalSeconds:F2}s ({TimeToApm(maxTimeUsed.Value)} A/min).");
-                Console.WriteLine($"Min time used {minTimeUsed!.Value.TotalSeconds:F2}s ({TimeToApm(minTimeUsed.Value)} A/min).");
-            }
-            else
-            {
-                Console.Write("Press any key to continue...");
-                Console.ReadKey();
-                Console.Clear();
-            }
+            Console.Write("Press any key to continue...");
+            Console.ReadKey();
+            Console.Clear();
+        }
+
+        if (done)
+        {
+            Console.Clear();
+            Console.WriteLine($"Congratulations! You succeeded {consecutiveSuccess} times in a row above required {MinAnswersPerMinRequired:F2} A/min.");
+            Console.WriteLine($"Max time used {maxTimeUsed!.Value.TotalSeconds:F2}s ({TimeToApm(maxTimeUsed.Value)} A/min).");
+            Console.WriteLine($"Min time used {minTimeUsed!.Value.TotalSeconds:F2}s ({TimeToApm(minTimeUsed.Value)} A/min).");
         }
     }
 
@@ -317,5 +317,72 @@ internal class Game(int digitsOperand1, int digitsOperand2, double answersPerMin
             var operand2 = rand.Next(2, (int)Math.Pow(10, DigitsOperand1));
             return (operand1, operand2);
         }
+    }
+
+    // a<=b
+    static double AssessComplexitySingleDigit(int a, int b)
+    {
+        if (a > b) (a, b) = (b, a);
+        if (a == 6 && b > 6) return 1.1;
+        if (a == 7 && b > 7) return 1.1;
+        if (a == 5 && b == 9) return 1.0;
+        if (a == 0) return 0.1;
+        return 0.9;
+    }
+
+    static double AssessComplexity(int a, int b)
+    {
+        if (a < b) (a, b) = (b, a);
+        var digitsA = ConvertNumberToDigits(a);
+        var digitsB = ConvertNumberToDigits(b);
+        return AssessComplexity(digitsA, digitsB);
+    }
+
+    static int[] ConvertNumberToDigits(int number)
+    {
+        Queue<int> q = new Queue<int>();
+        for (; number > 0; number /= 10)
+        {
+            var d = number % 10;
+            q.Enqueue(d);
+        }
+        return q.ToArray();
+    }
+
+    static double AssessComplexity(int[] digitsOperand1, int[] digitsOperand2)
+    {
+        double totalComplexity = 0;
+        foreach (var b in digitsOperand2)
+        {
+            for (var j = 0; j < digitsOperand1.Length; j++)
+            {
+                var a = digitsOperand1[j];
+
+                var compSingleDigit = AssessComplexitySingleDigit(a, b);
+                if (j < digitsOperand1.Length - 1)
+                {
+                    var m = a * b;
+                    var carry = m / 10;
+
+                    var lsd = digitsOperand1[j + 1] % 10;
+
+                    if (carry >= 0)
+                    {
+                        // TODO Can make this configurable
+                        if (carry + lsd < 10)
+                        {
+                            compSingleDigit += 0.5;
+                        }
+                        else
+                        {
+                            compSingleDigit += 0.9;
+                        }
+                    }
+                }
+
+                totalComplexity += compSingleDigit;
+            }
+        }
+        return totalComplexity;
     }
 }
