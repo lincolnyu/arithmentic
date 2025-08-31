@@ -76,7 +76,10 @@
             sw.WriteLine(answer);
         }
         Console.WriteLine($"Answers logged in file '{loggerFilePath}'.");
-        System.Diagnostics.Process.Start("notepad.exe", loggerFilePath!);
+
+        var tempPath = Path.Combine(Path.GetTempPath(), Path.GetFileName(loggerFilePath!));
+        File.Copy(loggerFilePath!, tempPath, true);
+        System.Diagnostics.Process.Start("notepad.exe", tempPath!);
     }
     Console.Write("Press any key to exit...");
     Console.ReadKey();
